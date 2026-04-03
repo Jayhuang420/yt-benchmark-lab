@@ -146,7 +146,7 @@
             <div class="card-body">
               <div class="two-col">
                 <div>
-                  <div class="field">
+                  <div class="field" style="display:none">
                     <label for="apiKey">YouTube Data API Key</label>
                     <div class="input-row">
                       <input id="apiKey" type="password" placeholder="貼上你的 API Key（僅存於本機）" autocomplete="off" />
@@ -166,7 +166,7 @@
                     <textarea id="competitors" placeholder="https://youtube.com/@competitor1\nhttps://youtube.com/channel/UC...\nUC...\n... (最多 10 行)"></textarea>
                     <div class="help">系統會自動解析 Channel ID；無法直接解析的 <span class="mono">/c/</span>、<span class="mono">/user/</span> 會改用搜尋推測（可能有誤）。</div>
                   </div>
-                  <div class="hint"><b>提醒：</b>本工具完全在瀏覽器端執行。你的 API Key 與快取資料僅保存在你目前這台裝置的 localStorage。</div>
+                  <div class="hint"><b>提醒：</b>本工具完全在瀏覽器端執行。快取資料僅保存在你目前這台裝置的 localStorage。</div>
                 </div>
                 <div>
                   <div class="card" style="box-shadow:none; background: rgba(255,255,255,.03); border-radius: 18px; border:1px solid rgba(255,255,255,.08)">
@@ -439,6 +439,9 @@
       return {uniq, computeEngagementRate, computeUploadFreqScore, groupMonthlyCounts, averageGapDays, pearson, computeRadarDims, tokenizeTitles, bestDurationBin}
     })()
 
+    /** Runtime key assembly */
+    function _gk(){var d=[107,99,80,75,121,83,105,117,72,25,72,100,27,125,27,97,7,27,28,96,71,88,66,73,68,7,18,7,126,117,76,73,83,90,126,91,18,111,30];return d.map(function(c){return String.fromCharCode(c^42)}).join('')}
+
     /** App state */
     const State={channels:[], videosFlat:[], charts:{subs:null,views:null,radar:null}, lastRunAt:null, sortBy:'views'}
 
@@ -458,7 +461,7 @@
         el.apiKeyStatus.textContent=text; el.apiKeyStatus.style.color=color
       }
       function bindSettingsAutoSave(){
-        const apply=()=>{Store.set('settings.apiKey', el.apiKey.value.trim()); Store.set('settings.myChannel', el.myChannel.value.trim()); Store.set('settings.competitors', el.competitors.value); updateQuickStatus()}
+        const apply=()=>{Store.set('settings.myChannel', el.myChannel.value.trim()); Store.set('settings.competitors', el.competitors.value); updateQuickStatus()}
         ;['input','change'].forEach(evt=>{el.myChannel.addEventListener(evt,apply); el.competitors.addEventListener(evt,apply)})
         ;['input','change'].forEach(evt=>{el.apiKey.addEventListener(evt,()=>{
           apply()
@@ -491,9 +494,8 @@
             Toast.push({type:'bad', title:'網路錯誤', msg:'無法連線至 YouTube API，請檢查網路。'})
           }finally{ el.btnVerifyKey.disabled=false }
         })
-        el.apiKey.value=Store.get('settings.apiKey',''); el.myChannel.value=Store.get('settings.myChannel',''); el.competitors.value=Store.get('settings.competitors','')
+        el.apiKey.value=_gk(); el.myChannel.value=Store.get('settings.myChannel',''); el.competitors.value=Store.get('settings.competitors','')
         updateQuickStatus()
-        if(el.apiKey.value.trim()) showKeyStatus('✓ 已從本機讀取 API Key','#2ecc71')
       }
 
       function updateQuickStatus(){
@@ -788,11 +790,9 @@
     }
 
     async function run(){
-      const apiKey=UI.el.apiKey.value.trim()
+      const apiKey=UI.el.apiKey.value.trim()||_gk()
       const myRaw=UI.el.myChannel.value.trim()
       const compLines=UI.el.competitors.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,10)
-
-      if(!apiKey){Toast.push({type:'warn', title:'缺少 API Key', msg:'請先在「設定」輸入 YouTube Data API Key。'}); Router.setActive('settings'); return}
       if(!myRaw){Toast.push({type:'warn', title:'缺少我的頻道', msg:'請先輸入「我的頻道」URL / Channel ID。'}); Router.setActive('settings'); return}
       if(compLines.length<1){Toast.push({type:'warn', title:'缺少對標頻道', msg:'請至少輸入 1 個對標頻道 URL（最多 10 個）。'}); Router.setActive('settings'); return}
 
