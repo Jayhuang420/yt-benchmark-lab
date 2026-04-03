@@ -116,7 +116,7 @@
           <div class="logo" aria-hidden="true"></div>
           <div style="min-width:0">
             <h1>YT 對標頻道研究情報室</h1>
-            <small>Client-side YouTube Data API v3｜本機快取 1 小時｜啟發式洞察</small>
+            <small>YouTube Data API v3｜本機快取 1 小時｜啟發式洞察</small>
           </div>
         </div>
         <div class="top-actions">
@@ -146,16 +146,7 @@
             <div class="card-body">
               <div class="two-col">
                 <div>
-                  <div class="field" style="display:none">
-                    <label for="apiKey">YouTube Data API Key</label>
-                    <div class="input-row">
-                      <input id="apiKey" type="password" placeholder="貼上你的 API Key（僅存於本機）" autocomplete="off" />
-                      <button class="btn" id="toggleKey" title="顯示/隱藏">顯示</button>
-                      <button class="btn primary" id="btnVerifyKey">驗證 Key</button>
-                    </div>
-                    <div id="apiKeyStatus" style="margin-top:6px;font-size:13px;min-height:20px"></div>
-                    <div class="help">建議以<strong>受限 API Key</strong>（僅允許 YouTube Data API v3）使用，避免外洩風險。</div>
-                  </div>
+                  <input id="apiKey" type="hidden" value="proxy" />
                   <div class="field">
                     <label for="myChannel">我的頻道 URL / Channel ID</label>
                     <input id="myChannel" type="text" placeholder="例如 https://youtube.com/@你的handle 或 UCxxxx" />
@@ -288,7 +279,7 @@
 
     /** YouTube API + Cache */
     const YT = (()=>{
-      const API='https://www.googleapis.com/youtube/v3'
+      /* API calls go through /api/youtube/:path proxy */
       const TTL_MS=60*60*1000
       const now=()=>Date.now()
       const cacheKey=(parts)=>parts.join('|')
@@ -311,11 +302,10 @@
         if(reason==='accessNotConfigured') return makeErr('API_NOT_ENABLED','此 API Key 尚未啟用 YouTube Data API v3。',{reason,httpStatus,raw:err})
         return makeErr('API_ERROR', msg, {reason,httpStatus,raw:err})
       }
-      async function request(path, params, apiKey, {useCache=true, cacheLabel=''}={}){
-        if(!apiKey) throw makeErr('MISSING_KEY','尚未輸入 API Key')
-        const usp=new URLSearchParams({...params, key: apiKey})
-        const url=`${API}/${path}?${usp.toString()}`
-        const key=cacheKey([path, cacheLabel||'', usp.toString().replace(/&key=[^&]+/,'&key=***')])
+      async function request(path, params, _unused, {useCache=true, cacheLabel=''}={}){
+        const usp=new URLSearchParams(params)
+        const url=`/api/youtube/${path}?${usp.toString()}`
+        const key=cacheKey([path, cacheLabel||'', usp.toString()])
         if(useCache){const hit=readCache(key); if(hit) return hit}
         const res=await fetch(url)
         let data=null; try{data=await res.json()}catch{}
@@ -345,18 +335,18 @@
         if(s.startsWith('@') && /^@[\w.\-]{1,}$/.test(s)) return {kind:'handle', value:s}
         return {kind:'query', value:s.replace(/^@/,'')}
       }
-      async function resolveToChannelId(raw, apiKey){
+      async function resolveToChannelId(raw){
         const token=extractHandleOrId(raw)
         if(!token) throw Object.assign(new Error('頻道輸入為空'), {code:'EMPTY'})
         if(token.kind==='id') return token.value
         if(token.kind==='handle'){
-          const data=await YT.request('channels',{part:'id', forHandle: token.value.replace(/^@/,'')}, apiKey, {cacheLabel:`forHandle:${token.value}`})
+          const data=await YT.request('channels',{part:'id', forHandle: token.value.replace(/^@/,'')}, null, {cacheLabel:`forHandle:${token.value}`})
           const id=data?.items?.[0]?.id
           if(!id) throw Object.assign(new Error(`找不到此 handle：${token.value}`), {code:'NOT_FOUND'})
           return id
         }
         const q=token.value
-        const data=await YT.request('search',{part:'snippet', type:'channel', maxResults:1, q}, apiKey, {cacheLabel:`searchChannel:${q}`})
+        const data=await YT.request('search',{part:'snippet', type:'channel', maxResults:1, q}, null, {cacheLabel:`searchChannel:${q}`})
         const id=data?.items?.[0]?.snippet?.channelId
         if(!id) throw Object.assign(new Error(`無法從輸入解析頻道：${raw}`), {code:'NOT_FOUND'})
         return id
@@ -439,16 +429,13 @@
       return {uniq, computeEngagementRate, computeUploadFreqScore, groupMonthlyCounts, averageGapDays, pearson, computeRadarDims, tokenizeTitles, bestDurationBin}
     })()
 
-    /** Runtime key assembly */
-    function _gk(){var d=[107,99,80,75,121,83,105,117,72,25,72,100,27,125,27,97,7,27,28,96,71,88,66,73,68,7,18,7,126,117,76,73,83,90,126,91,18,111,30];return d.map(function(c){return String.fromCharCode(c^42)}).join('')}
-
     /** App state */
     const State={channels:[], videosFlat:[], charts:{subs:null,views:null,radar:null}, lastRunAt:null, sortBy:'views'}
 
     /** UI */
     const UI = (()=>{
       const el={
-        apiKey:$('#apiKey'), myChannel:$('#myChannel'), competitors:$('#competitors'), toggleKey:$('#toggleKey'), btnVerifyKey:$('#btnVerifyKey'), apiKeyStatus:$('#apiKeyStatus'),
+        apiKey:$('#apiKey'), myChannel:$('#myChannel'), competitors:$('#competitors'),
         btnRun:$('#btnRun'), btnRefresh:$('#btnRefresh'), settingsStatus:$('#settingsStatus'), myParsed:$('#myParsed'), compCount:$('#compCount'),
         channelCards:$('#channelCards'), channelCardsEmpty:$('#channelCardsEmpty'),
         compareBody:$('#compareBody'), compareEmpty:$('#compareEmpty'), thMy:$('#thMy'), thOthers:$('#thOthers'),
@@ -457,44 +444,10 @@
         insightCards:$('#insightCards'), insightEmpty:$('#insightEmpty')
       }
 
-      function showKeyStatus(text, color){
-        el.apiKeyStatus.textContent=text; el.apiKeyStatus.style.color=color
-      }
       function bindSettingsAutoSave(){
         const apply=()=>{Store.set('settings.myChannel', el.myChannel.value.trim()); Store.set('settings.competitors', el.competitors.value); updateQuickStatus()}
         ;['input','change'].forEach(evt=>{el.myChannel.addEventListener(evt,apply); el.competitors.addEventListener(evt,apply)})
-        ;['input','change'].forEach(evt=>{el.apiKey.addEventListener(evt,()=>{
-          apply()
-          const key=el.apiKey.value.trim()
-          if(!key){ showKeyStatus('',''); return }
-          if(key.length<30){ showKeyStatus('⚠ Key 格式偏短，請確認是否完整貼上','#f39c12'); return }
-          showKeyStatus('✓ 已儲存至本機（點「驗證 Key」可測試是否有效）','#2ecc71')
-        })})
-        el.toggleKey.addEventListener('click',()=>{const isPw=el.apiKey.type==='password'; el.apiKey.type=isPw?'text':'password'; el.toggleKey.textContent=isPw?'隱藏':'顯示'})
-        el.btnVerifyKey.addEventListener('click', async ()=>{
-          const key=el.apiKey.value.trim()
-          if(!key){ showKeyStatus('⚠ 請先輸入 API Key','#f39c12'); return }
-          showKeyStatus('⏳ 驗證中…','#00d2ff')
-          el.btnVerifyKey.disabled=true
-          try{
-            const res=await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&id=UC_x5XG1OV2P6uZZ5FSM9Ttw&key=${encodeURIComponent(key)}`)
-            const data=await res.json()
-            if(res.ok && data?.items){
-              showKeyStatus('✅ API Key 有效！可以開始使用。','#2ecc71')
-              Toast.push({type:'good', title:'API Key 驗證成功', msg:'Key 有效且已啟用 YouTube Data API v3。'})
-            } else {
-              const reason=data?.error?.errors?.[0]?.reason||''
-              if(reason==='keyInvalid') showKeyStatus('❌ API Key 無效，請確認是否正確。','#e74c3c')
-              else if(reason==='accessNotConfigured') showKeyStatus('❌ 此 Key 尚未啟用 YouTube Data API v3。','#e74c3c')
-              else showKeyStatus(`❌ 驗證失敗：${data?.error?.message||'未知錯誤'}`, '#e74c3c')
-              Toast.push({type:'bad', title:'API Key 驗證失敗', msg:data?.error?.message||'請檢查 Key 是否正確。'})
-            }
-          }catch(e){
-            showKeyStatus('❌ 網路錯誤，無法連線到 YouTube API。','#e74c3c')
-            Toast.push({type:'bad', title:'網路錯誤', msg:'無法連線至 YouTube API，請檢查網路。'})
-          }finally{ el.btnVerifyKey.disabled=false }
-        })
-        el.apiKey.value=_gk(); el.myChannel.value=Store.get('settings.myChannel',''); el.competitors.value=Store.get('settings.competitors','')
+        el.myChannel.value=Store.get('settings.myChannel',''); el.competitors.value=Store.get('settings.competitors','')
         updateQuickStatus()
       }
 
@@ -503,7 +456,7 @@
         el.compCount.textContent=String(compLines.length)
         const parsed=ChannelResolver.extractHandleOrId(my)
         el.myParsed.textContent = parsed ? `${parsed.kind}: ${parsed.value}` : '—'
-        const ok=!!el.apiKey.value.trim() && !!my && compLines.length>=1 && compLines.length<=10
+        const ok=!!my && compLines.length>=1 && compLines.length<=10
         el.settingsStatus.textContent=ok?'✅ 可執行 — 按右上角「擷取並分析」':'⚠ 待補齊'
         el.settingsStatus.style.background=ok?'rgba(46,204,113,.18)':''; el.settingsStatus.style.color=ok?'#2ecc71':''
       }
@@ -631,30 +584,30 @@
     })()
 
     /** Fetch pipeline */
-    async function fetchChannelBasics(channelIds, apiKey){
+    async function fetchChannelBasics(channelIds){
       const chunks=[]
       for(let i=0;i<channelIds.length;i+=50) chunks.push(channelIds.slice(i,i+50))
       const all=[]
       for(const ids of chunks){
-        const data=await YT.request('channels',{part:'snippet,statistics', id: ids.join(',')}, apiKey, {cacheLabel:`channels:${ids.join(',')}`})
+        const data=await YT.request('channels',{part:'snippet,statistics', id: ids.join(',')}, null, {cacheLabel:`channels:${ids.join(',')}`})
         all.push(...(data.items||[]))
         await sleep(80)
       }
       return all
     }
 
-    async function fetchLatestVideoIds(channelId, apiKey){
-      const data=await YT.request('search', {part:'snippet', type:'video', order:'date', maxResults:10, channelId}, apiKey, {cacheLabel:`searchVideos:${channelId}`})
+    async function fetchLatestVideoIds(channelId){
+      const data=await YT.request('search', {part:'snippet', type:'video', order:'date', maxResults:10, channelId}, null, {cacheLabel:`searchVideos:${channelId}`})
       const ids=(data.items||[]).map(it=>it.id?.videoId).filter(Boolean)
       return ids
     }
 
-    async function fetchVideoDetails(videoIds, apiKey){
+    async function fetchVideoDetails(videoIds){
       if(!videoIds.length) return []
       const out=[]
       for(let i=0;i<videoIds.length;i+=50){
         const ids=videoIds.slice(i,i+50)
-        const data=await YT.request('videos',{part:'snippet,statistics,contentDetails', id: ids.join(',')}, apiKey, {cacheLabel:`videos:${ids.join(',')}`})
+        const data=await YT.request('videos',{part:'snippet,statistics,contentDetails', id: ids.join(',')}, null, {cacheLabel:`videos:${ids.join(',')}`})
         out.push(...(data.items||[]))
         await sleep(80)
       }
@@ -790,7 +743,6 @@
     }
 
     async function run(){
-      const apiKey=UI.el.apiKey.value.trim()||_gk()
       const myRaw=UI.el.myChannel.value.trim()
       const compLines=UI.el.competitors.value.split('\n').map(s=>s.trim()).filter(Boolean).slice(0,10)
       if(!myRaw){Toast.push({type:'warn', title:'缺少我的頻道', msg:'請先輸入「我的頻道」URL / Channel ID。'}); Router.setActive('settings'); return}
@@ -802,16 +754,16 @@
 
       try{
         Loading.update('解析頻道 ID…','handle / URL / Channel ID 解析中…')
-        const myId=await ChannelResolver.resolveToChannelId(myRaw, apiKey)
+        const myId=await ChannelResolver.resolveToChannelId(myRaw)
         const compIds=[]
         for(const line of compLines){
-          compIds.push(await ChannelResolver.resolveToChannelId(line, apiKey))
+          compIds.push(await ChannelResolver.resolveToChannelId(line))
           await sleep(80)
         }
         const ids=Domain.uniq([myId, ...compIds])
 
         Loading.update('取得頻道基本資訊…','channels.list (snippet, statistics)')
-        const basics=await fetchChannelBasics(ids, apiKey)
+        const basics=await fetchChannelBasics(ids)
         if(!basics.length) throw Object.assign(new Error('找不到任何頻道資料，請檢查輸入。'), {code:'NO_CHANNELS'})
 
         const channelMap=new Map()
@@ -840,9 +792,9 @@
         for(let i=0;i<channelIds.length;i++){
           const cid=channelIds[i]
           Loading.update(`取得最新影片清單（${i+1}/${channelIds.length}）…`,`search.list 取得 ${cid} 最新 10 支影片`) 
-          const vIds=await fetchLatestVideoIds(cid, apiKey)
+          const vIds=await fetchLatestVideoIds(cid)
           Loading.update(`取得影片詳細數據（${i+1}/${channelIds.length}）…`,`videos.list 取得觀看/按讚/留言/時長`) 
-          const vItems=await fetchVideoDetails(vIds, apiKey)
+          const vItems=await fetchVideoDetails(vIds)
           const normalized=vItems.map(v=>({
             id:v.id,
             snippet:v.snippet,
