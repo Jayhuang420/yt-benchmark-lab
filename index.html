@@ -151,7 +151,9 @@
                     <div class="input-row">
                       <input id="apiKey" type="password" placeholder="貼上你的 API Key（僅存於本機）" autocomplete="off" />
                       <button class="btn" id="toggleKey" title="顯示/隱藏">顯示</button>
+                      <button class="btn primary" id="btnVerifyKey">驗證 Key</button>
                     </div>
+                    <div id="apiKeyStatus" style="margin-top:6px;font-size:13px;min-height:20px"></div>
                     <div class="help">建議以<strong>受限 API Key</strong>（僅允許 YouTube Data API v3）使用，避免外洩風險。</div>
                   </div>
                   <div class="field">
@@ -443,7 +445,7 @@
     /** UI */
     const UI = (()=>{
       const el={
-        apiKey:$('#apiKey'), myChannel:$('#myChannel'), competitors:$('#competitors'), toggleKey:$('#toggleKey'),
+        apiKey:$('#apiKey'), myChannel:$('#myChannel'), competitors:$('#competitors'), toggleKey:$('#toggleKey'), btnVerifyKey:$('#btnVerifyKey'), apiKeyStatus:$('#apiKeyStatus'),
         btnRun:$('#btnRun'), btnRefresh:$('#btnRefresh'), settingsStatus:$('#settingsStatus'), myParsed:$('#myParsed'), compCount:$('#compCount'),
         channelCards:$('#channelCards'), channelCardsEmpty:$('#channelCardsEmpty'),
         compareBody:$('#compareBody'), compareEmpty:$('#compareEmpty'), thMy:$('#thMy'), thOthers:$('#thOthers'),
@@ -452,12 +454,46 @@
         insightCards:$('#insightCards'), insightEmpty:$('#insightEmpty')
       }
 
+      function showKeyStatus(text, color){
+        el.apiKeyStatus.textContent=text; el.apiKeyStatus.style.color=color
+      }
       function bindSettingsAutoSave(){
         const apply=()=>{Store.set('settings.apiKey', el.apiKey.value.trim()); Store.set('settings.myChannel', el.myChannel.value.trim()); Store.set('settings.competitors', el.competitors.value); updateQuickStatus()}
-        ;['input','change'].forEach(evt=>{el.apiKey.addEventListener(evt,apply); el.myChannel.addEventListener(evt,apply); el.competitors.addEventListener(evt,apply)})
+        ;['input','change'].forEach(evt=>{el.myChannel.addEventListener(evt,apply); el.competitors.addEventListener(evt,apply)})
+        ;['input','change'].forEach(evt=>{el.apiKey.addEventListener(evt,()=>{
+          apply()
+          const key=el.apiKey.value.trim()
+          if(!key){ showKeyStatus('',''); return }
+          if(key.length<30){ showKeyStatus('⚠ Key 格式偏短，請確認是否完整貼上','#f39c12'); return }
+          showKeyStatus('✓ 已儲存至本機（點「驗證 Key」可測試是否有效）','#2ecc71')
+        })})
         el.toggleKey.addEventListener('click',()=>{const isPw=el.apiKey.type==='password'; el.apiKey.type=isPw?'text':'password'; el.toggleKey.textContent=isPw?'隱藏':'顯示'})
+        el.btnVerifyKey.addEventListener('click', async ()=>{
+          const key=el.apiKey.value.trim()
+          if(!key){ showKeyStatus('⚠ 請先輸入 API Key','#f39c12'); return }
+          showKeyStatus('⏳ 驗證中…','#00d2ff')
+          el.btnVerifyKey.disabled=true
+          try{
+            const res=await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&id=UC_x5XG1OV2P6uZZ5FSM9Ttw&key=${encodeURIComponent(key)}`)
+            const data=await res.json()
+            if(res.ok && data?.items){
+              showKeyStatus('✅ API Key 有效！可以開始使用。','#2ecc71')
+              Toast.push({type:'good', title:'API Key 驗證成功', msg:'Key 有效且已啟用 YouTube Data API v3。'})
+            } else {
+              const reason=data?.error?.errors?.[0]?.reason||''
+              if(reason==='keyInvalid') showKeyStatus('❌ API Key 無效，請確認是否正確。','#e74c3c')
+              else if(reason==='accessNotConfigured') showKeyStatus('❌ 此 Key 尚未啟用 YouTube Data API v3。','#e74c3c')
+              else showKeyStatus(`❌ 驗證失敗：${data?.error?.message||'未知錯誤'}`, '#e74c3c')
+              Toast.push({type:'bad', title:'API Key 驗證失敗', msg:data?.error?.message||'請檢查 Key 是否正確。'})
+            }
+          }catch(e){
+            showKeyStatus('❌ 網路錯誤，無法連線到 YouTube API。','#e74c3c')
+            Toast.push({type:'bad', title:'網路錯誤', msg:'無法連線至 YouTube API，請檢查網路。'})
+          }finally{ el.btnVerifyKey.disabled=false }
+        })
         el.apiKey.value=Store.get('settings.apiKey',''); el.myChannel.value=Store.get('settings.myChannel',''); el.competitors.value=Store.get('settings.competitors','')
         updateQuickStatus()
+        if(el.apiKey.value.trim()) showKeyStatus('✓ 已從本機讀取 API Key','#2ecc71')
       }
 
       function updateQuickStatus(){
@@ -466,7 +502,8 @@
         const parsed=ChannelResolver.extractHandleOrId(my)
         el.myParsed.textContent = parsed ? `${parsed.kind}: ${parsed.value}` : '—'
         const ok=!!el.apiKey.value.trim() && !!my && compLines.length>=1 && compLines.length<=10
-        el.settingsStatus.textContent=ok?'可執行':'待補齊'
+        el.settingsStatus.textContent=ok?'✅ 可執行 — 按右上角「擷取並分析」':'⚠ 待補齊'
+        el.settingsStatus.style.background=ok?'rgba(46,204,113,.18)':''; el.settingsStatus.style.color=ok?'#2ecc71':''
       }
 
       function renderChannelCards(channels){
